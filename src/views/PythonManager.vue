@@ -10,7 +10,7 @@
             <Icon name="server" size="xs" class="text-gray-500" />
             <h3 class="text-xs font-semibold text-gray-700">Python 环境</h3>
           </div>
-          <Button @click="handleRefresh" :loading="isLoading" size="xs">
+          <Button @click="handleRefresh" :loading="isLoadingInfo" size="xs">
             <Icon name="refresh" size="xs" />
             刷新
           </Button>
@@ -71,23 +71,87 @@
             从官方网站下载最新版本的 Python
           </p>
 
-          <div class="px-2">
-            <DownloadButton
-              v-if="downloadTarget"
-              :url="downloadTarget.url"
-              :filename="downloadTarget.filename"
-              :version="downloadTarget.version"
-              :date="downloadTarget.date"
-              label="最新稳定版本"
-              badge-text="最新"
-              variant="current"
-              @download-start="handleDownloadStart"
-              @download-complete="handleDownloadComplete"
-              @download-error="handleDownloadError"
-            />
+          <div class="px-2 space-y-3">
+            <div
+              v-if="isLoadingVersions"
+              class="rounded-lg border border-dashed border-gray-200 px-3 py-4 text-center"
+            >
+              <div
+                class="flex items-center justify-center gap-2 text-xs text-gray-500"
+              >
+                <div
+                  class="w-3 h-3 border-2 border-gray-400 border-t-transparent rounded-full animate-spin"
+                ></div>
+                <span>正在加载 Python 版本列表...</span>
+              </div>
+            </div>
+            <template v-else-if="hasDownloadOptions">
+              <div v-if="primaryStable">
+                <DownloadButton
+                  :url="primaryStable.url"
+                  :filename="primaryStable.filename"
+                  :version="primaryStable.version"
+                  :date="primaryStable.date"
+                  label="最新稳定版本"
+                  variant="current"
+                  :tag-text="primaryStable.tagText"
+                  :tag-variant="primaryStable.tagVariant"
+                  @download-start="handleDownloadStart"
+                  @download-complete="handleDownloadComplete"
+                  @download-error="handleDownloadError"
+                />
+              </div>
+
+              <div v-if="otherStable.length" class="space-y-2">
+                <div class="px-1 text-[12px] font-medium text-gray-500">
+                  其他稳定版本
+                </div>
+                <div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  <DownloadButton
+                    v-for="item in otherStable"
+                    :key="`stable-${item.version}`"
+                    :url="item.url"
+                    :filename="item.filename"
+                    :version="item.version"
+                    :date="item.date"
+                    label="稳定版本"
+                    variant="lts"
+                    :tag-text="item.tagText"
+                    :tag-variant="item.tagVariant"
+                    @download-start="handleDownloadStart"
+                    @download-complete="handleDownloadComplete"
+                    @download-error="handleDownloadError"
+                  />
+                </div>
+              </div>
+
+              <div v-if="previewVersions.length" class="space-y-2">
+                <div class="px-1 text-[12px] font-medium text-gray-500">
+                  最新预览版本
+                </div>
+                <div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  <DownloadButton
+                    v-for="item in previewVersions"
+                    :key="`preview-${item.version}`"
+                    :url="item.url"
+                    :filename="item.filename"
+                    :version="item.version"
+                    :date="item.date"
+                    label="预览版本"
+                    variant="current"
+                    :tag-text="item.tagText"
+                    :tag-variant="item.tagVariant"
+                    @download-start="handleDownloadStart"
+                    @download-complete="handleDownloadComplete"
+                    @download-error="handleDownloadError"
+                  />
+                </div>
+              </div>
+            </template>
+
             <div
               v-else
-              class="px-3 py-4 text-xs text-gray-400 border border-dashed border-gray-200 rounded-lg text-center"
+              class="rounded-lg border border-dashed border-gray-200 px-3 py-4 text-center text-xs text-gray-400"
             >
               暂无可用的下载版本，请稍后再试
             </div>
@@ -99,28 +163,40 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, onMounted } from "vue";
+import { computed, onMounted } from "vue";
 import { usePythonStore } from "../stores/python";
 import { storeToRefs } from "pinia";
 import Button from "../components/Button.vue";
 import Icon from "../components/Icon.vue";
 import DownloadButton from "../components/DownloadButton.vue";
 import { useTerminalStore } from "../stores/terminal";
+import type { PythonVersion } from "../types";
 
 const pythonStore = usePythonStore();
-const { pythonInfo, versions } = storeToRefs(pythonStore);
+const { pythonInfo, versions, isLoadingInfo, isLoadingVersions } =
+  storeToRefs(pythonStore);
 const terminalStore = useTerminalStore();
 
-const isLoading = ref(false);
+function compareSemverDesc(a: PythonVersion, b: PythonVersion) {
+  const parse = (input: string) =>
+    input.split(".").map((part) => Number.parseInt(part) || 0);
 
-const latestStableVersion = computed(() =>
-  versions.value.find((version) => !version.isPreRelease)
-);
+  const [aMajor, aMinor, aPatch] = parse(a.version);
+  const [bMajor, bMinor, bPatch] = parse(b.version);
 
-const downloadTarget = computed(() => {
-  const version = latestStableVersion.value;
-  if (!version) return null;
+  if (aMajor !== bMajor) return bMajor - aMajor;
+  if (aMinor !== bMinor) return bMinor - aMinor;
+  return (bPatch || 0) - (aPatch || 0);
+}
 
+function toDownloadItem(
+  version: PythonVersion,
+  options: {
+    tagText: string;
+    tagVariant: "latest" | "stable" | "preview";
+    variant: "lts" | "current";
+  }
+) {
   try {
     const info = pythonStore.getDownloadInfo(version.version);
     return {
@@ -129,15 +205,75 @@ const downloadTarget = computed(() => {
       date: version.releaseDate
         ? new Date(version.releaseDate).toLocaleDateString("zh-CN")
         : "",
+      tagText: options.tagText,
+      tagVariant: options.tagVariant,
+      variant: options.variant,
     };
   } catch (error) {
     console.error("获取下载信息失败:", error);
     return null;
   }
+}
+
+const sortedStableVersions = computed(() => {
+  return versions.value
+    .filter((version) => !version.isPreRelease)
+    .slice()
+    .sort(compareSemverDesc);
 });
 
+const sortedPreviewVersions = computed(() => {
+  return versions.value
+    .filter((version) => version.isPreRelease)
+    .slice()
+    .sort(compareSemverDesc);
+});
+
+const primaryStable = computed(() => {
+  const version = sortedStableVersions.value[0];
+  if (!version) return null;
+  return toDownloadItem(version, {
+    tagText: "最新",
+    tagVariant: "latest",
+    variant: "current",
+  });
+});
+
+const otherStable = computed(() => {
+  return sortedStableVersions.value
+    .slice(1, 5)
+    .map((version) =>
+      toDownloadItem(version, {
+        tagText: "稳定",
+        tagVariant: "stable",
+        variant: "lts",
+      })
+    )
+    .filter((item): item is NonNullable<typeof item> => Boolean(item));
+});
+
+const previewVersions = computed(() => {
+  return sortedPreviewVersions.value
+    .slice(0, 4)
+    .map((version) =>
+      toDownloadItem(version, {
+        tagText: "预览",
+        tagVariant: "preview",
+        variant: "current",
+      })
+    )
+    .filter((item): item is NonNullable<typeof item> => Boolean(item));
+});
+
+const hasDownloadOptions = computed(() =>
+  Boolean(
+    primaryStable.value ||
+      otherStable.value.length ||
+      previewVersions.value.length
+  )
+);
+
 async function handleRefresh() {
-  isLoading.value = true;
   try {
     terminalStore.info("正在检测 Python 环境...");
     const success = await pythonStore.fetchPythonInfo();
@@ -146,8 +282,8 @@ async function handleRefresh() {
     } else {
       terminalStore.error("环境检测失败");
     }
-  } finally {
-    isLoading.value = false;
+  } catch (error: any) {
+    terminalStore.error(`环境检测失败：${error.message}`);
   }
 }
 

@@ -60,13 +60,21 @@
         </keep-alive>
       </router-view>
     </main>
+
+    <!-- 全局组件 -->
+    <Notify ref="notifyRef" />
+    <Confirm ref="confirmRef" />
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, ref, onMounted } from "vue";
 import { useRoute } from "vue-router";
 import Icon from "./components/Icon.vue";
+import Notify from "./components/Notify.vue";
+import Confirm from "./components/Confirm.vue";
+import { setNotifyInstance, useNotify } from "./composables/useNotify";
+import { setConfirmInstance } from "./composables/useConfirm";
 
 const route = useRoute();
 
@@ -77,8 +85,24 @@ const tabs = [
 ];
 
 const showTerminal = computed(() => route.path === "/terminal");
+const notifyRef = ref<InstanceType<typeof Notify> | null>(null);
+const confirmRef = ref<InstanceType<typeof Confirm> | null>(null);
 
 function toggleTerminal() {
   // 路由跳转由 router-link 处理
 }
+
+onMounted(() => {
+  if (notifyRef.value) {
+    setNotifyInstance(notifyRef.value);
+    // 测试通知
+    // setTimeout(() => {
+    //   const notify = useNotify();
+    //   notify.success("Notify 组件已初始化！");
+    // }, 500);
+  }
+  if (confirmRef.value) {
+    setConfirmInstance(confirmRef.value);
+  }
+});
 </script>

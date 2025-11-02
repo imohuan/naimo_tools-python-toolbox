@@ -2,24 +2,32 @@
   <button
     @click="handleDownload"
     :disabled="isDownloading"
-    class="group flex-1 px-6 py-4 bg-white rounded-xl shadow-lg hover:shadow-xl transition-all duration-300 border-2 flex items-center gap-4 relative overflow-hidden"
+    class="relative flex w-full items-center gap-2 overflow-hidden rounded-lg border border-transparent bg-gray-50 px-3 py-2 transition-colors duration-200"
     :class="buttonClasses"
   >
     <!-- 背景进度条 -->
     <div
       v-if="isDownloading"
-      class="absolute inset-0 bg-gradient-to-r opacity-10 transition-all duration-300"
+      class="absolute inset-0 opacity-15 transition-all duration-300"
       :class="progressBgClass"
       :style="{ width: progress + '%' }"
     ></div>
 
+    <!-- 斜向标签 -->
+    <div
+      class="pointer-events-none absolute -right-7 top-2 flex h-5 w-24 rotate-45 items-center justify-center text-[10px] font-semibold tracking-wide text-white shadow-sm"
+      :class="tagClasses"
+    >
+      {{ isDownloading ? "下载中" : tagText }}
+    </div>
+
     <!-- 左侧图标 -->
     <div
-      class="w-12 h-12 rounded-lg flex items-center justify-center flex-shrink-0 transition-transform relative z-10"
+      class="relative z-10 flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-md text-white"
       :class="iconClasses"
     >
       <svg
-        class="w-6 h-6 text-white"
+        class="h-4 w-4"
         fill="none"
         viewBox="0 0 24 24"
         stroke="currentColor"
@@ -35,75 +43,70 @@
       </svg>
     </div>
 
-    <!-- 右侧文字和标签 -->
-    <div class="flex-1 flex items-center justify-between relative z-10">
+    <!-- 内容区域 -->
+    <div class="relative z-10 flex flex-1 items-center justify-between gap-2">
       <div class="text-left">
-        <div class="flex items-center gap-2 mb-1">
-          <span class="text-sm text-gray-500">{{ label }}</span>
-          <span
-            class="px-2 py-0.5 text-white text-xs font-bold rounded"
-            :class="badgeClass"
-          >
-            {{ isDownloading ? "下载中" : badgeText }}
-          </span>
-        </div>
-        <p class="text-xl font-bold text-gray-900 font-mono">
+        <p class="text-[11px] text-gray-500">{{ label }}</p>
+        <p class="mt-0.5 font-mono text-base font-semibold text-gray-900">
           {{ version }}
         </p>
-        <p v-if="!isDownloading" class="text-xs text-gray-400 mt-0.5">
-          {{ date }}
-        </p>
-        <!-- 下载信息 -->
-        <div v-else class="text-xs text-gray-600 mt-1 space-y-0.5">
-          <div class="flex items-center gap-2">
-            <span class="font-mono">{{ progress.toFixed(1) }}%</span>
-            <span class="text-gray-400">•</span>
-            <span class="font-mono">{{ formatBytes(downloadRate) }}/s</span>
-          </div>
-          <div class="text-gray-500">
-            {{ formatBytes(bytesReceived) }} / {{ formatBytes(totalBytes) }}
-          </div>
+        <div class="mt-1 flex h-4 items-center text-[11px] text-gray-500">
+          <template v-if="!isDownloading">
+            {{ date }}
+          </template>
+          <template v-else>
+            <span class="font-mono text-gray-700"
+              >{{ progress.toFixed(1) }}%</span
+            >
+            <span class="mx-1 text-gray-400">•</span>
+            <span class="font-mono text-gray-700"
+              >{{ formatBytes(downloadRate) }}/s</span
+            >
+          </template>
         </div>
       </div>
 
-      <!-- 右侧下载图标 -->
-      <svg
-        v-if="!isDownloading"
-        class="w-5 h-5 flex-shrink-0 transition-transform"
-        :class="iconColor"
-        fill="none"
-        viewBox="0 0 24 24"
-        stroke="currentColor"
+      <!-- 下载/加载图标 -->
+      <div
+        class="relative flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-md"
       >
-        <path
-          stroke-linecap="round"
-          stroke-linejoin="round"
-          stroke-width="2"
-          d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
-        />
-      </svg>
-      <!-- 加载状态图标 -->
-      <svg
-        v-else
-        class="w-5 h-5 flex-shrink-0 animate-spin"
-        :class="iconColor"
-        viewBox="0 0 24 24"
-      >
-        <circle
-          class="opacity-25"
-          cx="12"
-          cy="12"
-          r="10"
-          stroke="currentColor"
-          stroke-width="3"
+        <svg
+          v-if="!isDownloading"
+          class="h-4 w-4 transition-transform"
+          :class="iconColor"
           fill="none"
-        />
-        <path
-          class="opacity-75"
-          fill="currentColor"
-          d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-        />
-      </svg>
+          viewBox="0 0 24 24"
+          stroke="currentColor"
+        >
+          <path
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            stroke-width="2"
+            d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
+          />
+        </svg>
+        <svg
+          v-else
+          class="h-4 w-4 animate-spin"
+          :class="iconColor"
+          viewBox="0 0 24 24"
+        >
+          <circle
+            class="opacity-25"
+            cx="12"
+            cy="12"
+            r="10"
+            stroke="currentColor"
+            stroke-width="3"
+            fill="none"
+          />
+          <path
+            class="opacity-75"
+            fill="currentColor"
+            d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+          />
+        </svg>
+      </div>
     </div>
   </button>
 </template>
@@ -117,15 +120,17 @@ interface Props {
   version: string;
   date?: string;
   label?: string;
-  badgeText?: string;
   variant?: "lts" | "current";
+  tagText?: string;
+  tagVariant?: "latest" | "stable" | "preview";
 }
 
 const props = withDefaults(defineProps<Props>(), {
   date: "",
   label: "版本",
-  badgeText: "下载",
   variant: "lts",
+  tagText: "下载",
+  tagVariant: "stable" as const,
 });
 
 const emit = defineEmits<{
@@ -143,35 +148,39 @@ const currentDownloadId = ref("");
 
 const buttonClasses = computed(() => {
   if (isDownloading.value) {
-    return "border-blue-400 cursor-wait";
+    return "border-blue-400/80 bg-blue-50/20 cursor-wait";
   }
   return props.variant === "lts"
-    ? "border-green-200 hover:border-green-400"
-    : "border-blue-200 hover:border-blue-400";
+    ? "hover:border-emerald-400/80"
+    : "hover:border-indigo-400/80";
 });
 
 const iconClasses = computed(() => {
   const base = "bg-gradient-to-br";
   return props.variant === "lts"
-    ? `${base} from-green-400 to-emerald-500 group-hover:scale-110`
-    : `${base} from-blue-400 to-indigo-500 group-hover:scale-110`;
-});
-
-const badgeClass = computed(() => {
-  if (isDownloading.value) {
-    return "bg-blue-500 animate-pulse";
-  }
-  return props.variant === "lts" ? "bg-green-500" : "bg-blue-500";
+    ? `${base} from-emerald-500 to-teal-500`
+    : `${base} from-indigo-500 to-blue-500`;
 });
 
 const iconColor = computed(() => {
-  return props.variant === "lts" ? "text-green-500" : "text-blue-500";
+  return props.variant === "lts" ? "text-emerald-500" : "text-indigo-500";
 });
 
 const progressBgClass = computed(() => {
   return props.variant === "lts"
-    ? "from-green-400 to-emerald-500"
-    : "from-blue-400 to-indigo-500";
+    ? "bg-gradient-to-r from-emerald-400 to-teal-400"
+    : "bg-gradient-to-r from-indigo-400 to-blue-400";
+});
+
+const tagClasses = computed(() => {
+  switch (props.tagVariant) {
+    case "latest":
+      return "bg-indigo-500";
+    case "preview":
+      return "bg-orange-500";
+    default:
+      return "bg-emerald-500";
+  }
 });
 
 function formatBytes(bytes: number): string {

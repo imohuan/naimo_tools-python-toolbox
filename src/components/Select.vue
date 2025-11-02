@@ -4,7 +4,9 @@
       @click="toggleDropdown"
       :class="[
         'w-full flex items-center justify-between bg-white border border-gray-300 rounded-md hover:border-indigo-500 transition-colors text-left',
-        size === 'sm' ? 'px-2 py-1 text-xs min-w-[120px]' : 'px-3 py-2 text-sm',
+        size === 'sm'
+          ? 'px-2 py-1 text-xs min-w-[120px] h-[26px]'
+          : 'px-3 py-2 text-sm',
         { 'border-indigo-500': isOpen },
       ]"
     >

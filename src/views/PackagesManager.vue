@@ -24,8 +24,8 @@
             size="sm"
             variant="secondary"
           >
-            <Icon name="search" size="sm" />
-            {{ isCheckingUpdates ? `检查中 ${checkProgress}%` : "检查更新" }}
+            <Icon v-if="!isCheckingUpdates" name="search" size="sm" />
+            检查更新
           </Button>
 
           <Button
@@ -37,72 +37,74 @@
             <Icon name="refresh" size="sm" />
             批量更新 ({{ packagesWithUpdate.length }})
           </Button>
-
-          <!-- 包管理器切换 -->
-          <div class="flex items-center bg-gray-100 rounded-lg p-0.5">
-            <button
-              @click="togglePackageManager"
-              :class="[
-                'px-3 py-1.5 text-xs font-medium rounded-md transition-all',
-                !usePip
-                  ? 'bg-white text-indigo-600 shadow-sm'
-                  : 'text-gray-600',
-              ]"
-            >
-              UV
-            </button>
-            <button
-              @click="togglePackageManager"
-              :class="[
-                'px-3 py-1.5 text-xs font-medium rounded-md transition-all',
-                usePip ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-600',
-              ]"
-            >
-              PIP
-            </button>
-          </div>
         </div>
       </template>
     </Teleport>
 
-    <transition name="fade" appear>
-      <div
-        v-if="commandLoading"
-        class="absolute inset-0 bg-white/80 backdrop-blur-sm flex flex-col items-center justify-center z-40"
-      >
-        <Loading />
-        <p v-if="commandMessage" class="mt-3 text-sm text-gray-600">
-          {{ commandMessage }}
-        </p>
-      </div>
-    </transition>
-
     <div class="p-4">
       <div class="max-w-6xl mx-auto">
         <!-- 标签页导航 -->
-        <div class="flex items-center gap-2 mb-4 border-b border-gray-200">
-          <button
-            v-for="tab in tabs"
-            :key="tab.key"
-            @click="activeTab = tab.key"
-            class="px-4 py-2 text-sm font-medium transition-all relative"
-            :class="
-              activeTab === tab.key
-                ? 'text-indigo-600 border-b-2 border-indigo-600'
-                : 'text-gray-600 hover:text-gray-900'
-            "
-          >
-            {{ tab.label }}
-            <span
-              v-if="tab.count !== undefined"
-              class="ml-1.5 px-1.5 py-0.5 text-xs rounded-full"
+        <div
+          class="flex items-center justify-between mb-4 border-b border-gray-200"
+        >
+          <div class="flex items-center gap-2">
+            <button
+              v-for="tab in tabs"
+              :key="tab.key"
+              @click="activeTab = tab.key"
+              class="px-4 py-2 text-sm font-medium transition-all relative"
               :class="
                 activeTab === tab.key
-                  ? 'bg-indigo-100 text-indigo-700'
-                  : 'bg-gray-100 text-gray-600'
+                  ? 'text-indigo-600 border-b-2 border-indigo-600'
+                  : 'text-gray-600 hover:text-gray-900'
               "
             >
-              {{ tab.count }}
+              {{ tab.label }}
+              <span
+                v-if="tab.count !== undefined"
+                class="ml-1.5 px-1.5 py-0.5 text-xs rounded-full"
+                :class="
+                  activeTab === tab.key
+                    ? 'bg-indigo-100 text-indigo-700'
+                    : 'bg-gray-100 text-gray-600'
+                "
+              >
+                {{ tab.count }}
+              </span>
+            </button>
+          </div>
+
+          <button
+            v-if="isCheckingUpdates"
+            @click.stop="handleCancelCheckUpdates"
+            type="button"
+            class="flex items-center gap-1.5 px-2 py-1 text-xs rounded transition-colors cursor-pointer"
+            :class="
+              isCancelling
+                ? 'text-orange-600 hover:text-orange-700 hover:bg-orange-50'
+                : 'text-indigo-600 hover:text-indigo-700 hover:bg-indigo-50'
+            "
+            :title="
+              isCancelling && currentCheckingPackage
+                ? `正在等待 ${currentCheckingPackage} 检查完成...`
+                : '点击取消检查更新'
+            "
+          >
+            <div
+              v-if="!isCancelling"
+              class="w-2.5 h-2.5 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin"
+            ></div>
+            <div
+              v-else
+              class="w-2.5 h-2.5 border-2 border-orange-600 border-t-transparent rounded-full animate-spin"
+            ></div>
+            <span>{{ checkProgress }}%</span>
+            <Icon name="x" size="xs" class="ml-0.5" />
+            <span
+              v-if="isCancelling && currentCheckingPackage"
+              class="ml-1 text-[10px] opacity-75"
+            >
+              等待中...
             </span>
           </button>
         </div>
@@ -331,9 +333,13 @@ import Button from "../components/Button.vue";
 import Icon from "../components/Icon.vue";
 import Loading from "../components/Loading.vue";
 import PackageCard from "../components/PackageCard.vue";
+import { useNotify } from "../composables/useNotify";
+import { useConfirm } from "../composables/useConfirm";
 
 const route = useRoute();
 const packagesStore = usePackagesStore();
+const notify = useNotify();
+const confirm = useConfirm();
 
 const {
   packages,
@@ -342,13 +348,12 @@ const {
   isSearching,
   isCheckingUpdates,
   checkProgress,
-  usePip,
+  currentCheckingPackage,
+  isCancelling,
   packagesByCategory,
   packagesWithUpdate,
   uninstalledRecommended,
   recommendedTools,
-  commandLoading,
-  commandMessage,
 } = storeToRefs(packagesStore);
 
 const activeTab = ref<"installed" | "updates" | "recommended" | "search">(
@@ -360,6 +365,7 @@ const isInstalling = ref(false);
 const installingPackage = ref("");
 const updatingPackage = ref("");
 const uninstallingPackage = ref("");
+const checkingPackage = ref("");
 
 // 包操作状态
 function getPackageOperation(packageName: string) {
@@ -367,7 +373,20 @@ function getPackageOperation(packageName: string) {
     installing: installingPackage.value === packageName,
     updating: updatingPackage.value === packageName,
     uninstalling: uninstallingPackage.value === packageName,
+    checking:
+      checkingPackage.value === packageName ||
+      currentCheckingPackage.value === packageName,
   };
+}
+
+function isPackageBusy(packageName: string) {
+  return (
+    installingPackage.value === packageName ||
+    updatingPackage.value === packageName ||
+    uninstallingPackage.value === packageName ||
+    checkingPackage.value === packageName ||
+    currentCheckingPackage.value === packageName
+  );
 }
 
 const tabs = computed(() => [
@@ -403,18 +422,30 @@ async function handleCheckAllUpdates() {
   await packagesStore.checkAllUpdates();
 }
 
+function handleCancelCheckUpdates() {
+  packagesStore.cancelCheckUpdates();
+}
+
 async function handleCheckUpdate(packageName: string) {
-  await packagesStore.checkPackageUpdate(packageName);
+  if (isPackageBusy(packageName)) return;
+
+  checkingPackage.value = packageName;
+  try {
+    await packagesStore.checkPackageUpdate(packageName);
+  } finally {
+    checkingPackage.value = "";
+  }
 }
 
 async function handleUpdate(packageName: string) {
+  if (isPackageBusy(packageName)) return;
   updatingPackage.value = packageName;
   try {
     const success = await packagesStore.updatePackage(packageName);
     if (success) {
-      alert(`${packageName} 更新成功！`);
+      notify.success(`${packageName} 更新成功！`);
     } else {
-      alert(`${packageName} 更新失败！`);
+      notify.error(`${packageName} 更新失败！`);
     }
   } finally {
     updatingPackage.value = "";
@@ -422,15 +453,17 @@ async function handleUpdate(packageName: string) {
 }
 
 async function handleUninstall(packageName: string) {
-  if (!confirm(`确定要卸载 ${packageName} 吗？`)) return;
+  if (isPackageBusy(packageName)) return;
+  const confirmed = await confirm.confirm(`确定要卸载 ${packageName} 吗？`);
+  if (!confirmed) return;
 
   uninstallingPackage.value = packageName;
   try {
     const success = await packagesStore.uninstallPackage(packageName);
     if (success) {
-      alert(`${packageName} 卸载成功！`);
+      notify.success(`${packageName} 卸载成功！`);
     } else {
-      alert(`${packageName} 卸载失败！`);
+      notify.error(`${packageName} 卸载失败！`);
     }
   } finally {
     uninstallingPackage.value = "";
@@ -438,13 +471,14 @@ async function handleUninstall(packageName: string) {
 }
 
 async function handleInstall(packageName: string) {
+  if (isPackageBusy(packageName)) return;
   installingPackage.value = packageName;
   try {
     const success = await packagesStore.installPackage(packageName);
     if (success) {
-      alert(`${packageName} 安装成功！`);
+      notify.success(`${packageName} 安装成功！`);
     } else {
-      alert(`${packageName} 安装失败！`);
+      notify.error(`${packageName} 安装失败！`);
     }
   } finally {
     installingPackage.value = "";
@@ -452,28 +486,30 @@ async function handleInstall(packageName: string) {
 }
 
 async function handleUpdateAll() {
-  if (!confirm(`确定要更新 ${packagesWithUpdate.value.length} 个包吗？`))
-    return;
+  const confirmed = await confirm.confirm(
+    `确定要更新 ${packagesWithUpdate.value.length} 个包吗？`
+  );
+  if (!confirmed) return;
 
   isUpdating.value = true;
   try {
     await packagesStore.updateAllPackages();
-    alert("批量更新完成！");
+    notify.success("批量更新完成！");
   } finally {
     isUpdating.value = false;
   }
 }
 
 async function handleInstallAllRecommended() {
-  if (
-    !confirm(`确定要安装 ${uninstalledRecommended.value.length} 个推荐工具吗？`)
-  )
-    return;
+  const confirmed = await confirm.confirm(
+    `确定要安装 ${uninstalledRecommended.value.length} 个推荐工具吗？`
+  );
+  if (!confirmed) return;
 
   isInstalling.value = true;
   try {
     await packagesStore.installRecommendedTools();
-    alert("批量安装完成！");
+    notify.success("批量安装完成！");
   } finally {
     isInstalling.value = false;
   }
@@ -482,11 +518,6 @@ async function handleInstallAllRecommended() {
 async function handleSearch() {
   if (!searchKeyword.value.trim()) return;
   await packagesStore.searchPackages(searchKeyword.value);
-}
-
-function togglePackageManager() {
-  packagesStore.togglePackageManager();
-  refresh();
 }
 
 onMounted(async () => {

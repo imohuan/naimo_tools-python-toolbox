@@ -13,7 +13,8 @@ export const usePythonStore = defineStore("python", () => {
 
   const versions = ref<PythonVersion[]>([]);
   const selectedPlatform = ref<Platform>("win-x64");
-  const isLoading = ref(false);
+  const isLoadingInfo = ref(false);
+  const isLoadingVersions = ref(false);
 
   // 比较版本号
   function compareVersion(current: string, latest: string): number {
@@ -56,7 +57,7 @@ export const usePythonStore = defineStore("python", () => {
 
   // 获取当前环境信息
   async function fetchPythonInfo(): Promise<boolean> {
-    isLoading.value = true;
+    isLoadingInfo.value = true;
     try {
       if (!window.pythonToolboxAPI) {
         console.error("pythonToolboxAPI 不可用");
@@ -78,20 +79,33 @@ export const usePythonStore = defineStore("python", () => {
       console.error("获取 Python 信息失败:", error);
       return false;
     } finally {
-      isLoading.value = false;
+      isLoadingInfo.value = false;
     }
   }
 
   // 获取 Python 版本列表
   async function fetchVersions(): Promise<boolean> {
-    isLoading.value = true;
+    isLoadingVersions.value = true;
     try {
       if (!window.pythonToolboxAPI) {
         console.error("pythonToolboxAPI 不存在");
         return false;
       }
       const data = await window.pythonToolboxAPI.getPythonVersions();
-      versions.value = data.slice(0, 20); // 只取前20个版本
+      versions.value = data.slice(0, 20).map((item) => {
+        try {
+          const downloadInfo = getDownloadInfo(item.version);
+          return {
+            ...item,
+            url: downloadInfo.url,
+          };
+        } catch {
+          return {
+            ...item,
+            url: "",
+          };
+        }
+      });
 
       checkUpdate();
       return true;
@@ -99,7 +113,7 @@ export const usePythonStore = defineStore("python", () => {
       console.error("获取版本列表失败:", error);
       return false;
     } finally {
-      isLoading.value = false;
+      isLoadingVersions.value = false;
     }
   }
 
@@ -161,7 +175,8 @@ export const usePythonStore = defineStore("python", () => {
     pythonInfo,
     versions,
     selectedPlatform,
-    isLoading,
+    isLoadingInfo,
+    isLoadingVersions,
     fetchPythonInfo,
     fetchVersions,
     getDownloadInfo,

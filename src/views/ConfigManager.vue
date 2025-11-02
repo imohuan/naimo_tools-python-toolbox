@@ -72,7 +72,7 @@
                   v-model="item.value"
                   type="text"
                   :placeholder="item.placeholder"
-                  class="w-full px-2 py-1 text-xs border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500"
+                  class="w-full px-2 py-1 text-xs border border-gray-300 rounded h-[26px] focus:outline-none focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500"
                 />
 
                 <!-- 下拉选择 -->
@@ -89,7 +89,7 @@
                   v-model.number="item.value"
                   type="number"
                   :placeholder="item.placeholder"
-                  class="w-full px-2 py-1 text-xs border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500"
+                  class="w-full px-2 py-1 text-xs border border-gray-300 rounded h-[26px] focus:outline-none focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500"
                 />
               </div>
             </div>
@@ -112,11 +112,45 @@
               <div class="flex gap-1">
                 <button
                   @click="handleCopy"
-                  class="px-2 py-1 text-xs text-gray-600 hover:text-indigo-600 hover:bg-indigo-50 rounded transition-colors flex items-center gap-1"
-                  title="复制配置"
+                  class="px-2 py-1 text-xs rounded h-[26px] transition-colors flex items-center gap-1"
+                  :class="
+                    copied
+                      ? 'text-green-600 bg-green-50'
+                      : 'text-gray-600 hover:text-indigo-600 hover:bg-indigo-50'
+                  "
+                  :title="copied ? '已复制' : '复制配置'"
                 >
-                  <Icon name="clipboard" size="xs" />
-                  复制
+                  <svg
+                    v-if="!copied"
+                    xmlns="http://www.w3.org/2000/svg"
+                    class="h-3 w-3"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                  >
+                    <path
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      stroke-width="2"
+                      d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
+                    />
+                  </svg>
+                  <svg
+                    v-else
+                    xmlns="http://www.w3.org/2000/svg"
+                    class="h-3 w-3"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                  >
+                    <path
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      stroke-width="2"
+                      d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
+                    />
+                  </svg>
+                  {{ copied ? "已复制" : "复制" }}
                 </button>
               </div>
             </div>
@@ -160,7 +194,7 @@
                   type="text"
                   :placeholder="`${key} 路径`"
                   :disabled="key === 'PYTHON_PATH'"
-                  class="w-full px-2 py-1 text-xs border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 disabled:bg-gray-100 disabled:text-gray-500"
+                  class="w-full px-2 py-1 text-xs border border-gray-300 rounded h-[26px] focus:outline-none focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 disabled:bg-gray-100 disabled:text-gray-500"
                 />
               </div>
             </div>
@@ -181,16 +215,20 @@ import Button from "../components/Button.vue";
 import Icon from "../components/Icon.vue";
 import Select from "../components/Select.vue";
 import CodePreview from "../components/CodePreview.vue";
+import { useNotify } from "../composables/useNotify";
 
 const route = useRoute();
 const configStore = useConfigStore();
 const { configs, currentConfigId, currentConfig, pipConfig } =
   storeToRefs(configStore);
+const notify = useNotify();
 
 const configPath = ref("");
 const isSaving = ref(false);
 const isSavingEnv = ref(false);
 const showCreateDialog = ref(false);
+const copied = ref(false);
+let copyTimeoutId: number | null = null;
 
 const configOptions = computed(() => {
   return configs.value.map((config) => ({
@@ -219,9 +257,9 @@ async function handleSave() {
   try {
     const success = await configStore.saveConfig();
     if (success) {
-      alert("配置已成功应用！");
+      notify.success("配置已成功应用！");
     } else {
-      alert("配置应用失败，请检查权限。");
+      notify.error("配置应用失败，请检查权限。");
     }
   } finally {
     isSaving.value = false;
@@ -231,9 +269,18 @@ async function handleSave() {
 async function handleCopy() {
   try {
     await navigator.clipboard.writeText(pipConfig.value);
-    alert("配置已复制到剪贴板！");
+    copied.value = true;
+
+    if (copyTimeoutId) {
+      clearTimeout(copyTimeoutId);
+    }
+
+    copyTimeoutId = window.setTimeout(() => {
+      copied.value = false;
+      copyTimeoutId = null;
+    }, 2000);
   } catch (error) {
-    alert("复制失败，请手动复制。");
+    console.error("复制失败:", error);
   }
 }
 
@@ -245,9 +292,9 @@ async function handleSaveEnvVars() {
         await window.pythonToolboxAPI.setEnvironmentVariable(key, value);
       }
     }
-    alert("环境变量已保存！请重启终端以使更改生效。");
+    notify.success("环境变量已保存！请重启终端以使更改生效。");
   } catch (error: any) {
-    alert(`保存失败：${error.message}`);
+    notify.error(`保存失败：${error.message}`);
   } finally {
     isSavingEnv.value = false;
   }

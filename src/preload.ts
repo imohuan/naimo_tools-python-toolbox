@@ -6,6 +6,7 @@ import { promisify } from "util";
 import * as fs from "fs/promises";
 import * as path from "path";
 import * as os from "os";
+import * as https from "https";
 
 const execAsync = promisify(exec);
 
@@ -58,29 +59,20 @@ interface PythonToolboxAPI {
     exitCode: number;
   }>;
 
-  // 全局包管理
-  installGlobalPackage: (
-    name: string,
-    usePip?: boolean
-  ) => Promise<{
+  // 全局包管理（自动检测 uv，优先使用 uv pip）
+  installGlobalPackage: (name: string) => Promise<{
     success: boolean;
     stdout: string;
     stderr: string;
     error?: string;
   }>;
-  updateGlobalPackage: (
-    name: string,
-    usePip?: boolean
-  ) => Promise<{
+  updateGlobalPackage: (name: string) => Promise<{
     success: boolean;
     stdout: string;
     stderr: string;
     error?: string;
   }>;
-  uninstallGlobalPackage: (
-    name: string,
-    usePip?: boolean
-  ) => Promise<{
+  uninstallGlobalPackage: (name: string) => Promise<{
     success: boolean;
     stdout: string;
     stderr: string;
@@ -90,7 +82,7 @@ interface PythonToolboxAPI {
     installed: boolean;
     version?: string;
   }>;
-  listGlobalPackages: (usePip?: boolean) => Promise<{
+  listGlobalPackages: () => Promise<{
     packages: Array<{
       name: string;
       version: string;
@@ -99,10 +91,7 @@ interface PythonToolboxAPI {
     stderr: string;
   }>;
   getLatestVersion: (name: string) => Promise<string | null>;
-  batchUpdatePackages: (
-    names: string[],
-    usePip?: boolean
-  ) => Promise<
+  batchUpdatePackages: (names: string[]) => Promise<
     Array<{
       name: string;
       success: boolean;
@@ -297,6 +286,25 @@ async function getUvVersion(): Promise<string | null> {
   }
 }
 
+// 缓存 uv 可用性检测结果
+let uvAvailableCache: boolean | null = null;
+
+// 检测 uv 是否可用
+async function isUvAvailable(): Promise<boolean> {
+  if (uvAvailableCache !== null) {
+    return uvAvailableCache;
+  }
+
+  try {
+    await execAsync("uv --version");
+    uvAvailableCache = true;
+    return true;
+  } catch {
+    uvAvailableCache = false;
+    return false;
+  }
+}
+
 async function getPythonPath(): Promise<string | null> {
   try {
     const isWindows = os.platform() === "win32";
@@ -421,9 +429,11 @@ async function getEnvironmentInfo() {
 }
 
 // 全局包管理
-async function installGlobalPackage(name: string, usePip: boolean = false) {
-  const packageManager = usePip ? "pip" : "uv pip";
-  const command = `${packageManager} install ${name}`;
+async function installGlobalPackage(name: string) {
+  const useUv = await isUvAvailable();
+  const command = useUv
+    ? `uv pip install --system ${name}`
+    : `pip install ${name}`;
 
   try {
     const result = await executeCommandWithLogs(command);
@@ -442,9 +452,11 @@ async function installGlobalPackage(name: string, usePip: boolean = false) {
   }
 }
 
-async function updateGlobalPackage(name: string, usePip: boolean = false) {
-  const packageManager = usePip ? "pip" : "uv pip";
-  const command = `${packageManager} install --upgrade ${name}`;
+async function updateGlobalPackage(name: string) {
+  const useUv = await isUvAvailable();
+  const command = useUv
+    ? `uv pip install --upgrade --system ${name}`
+    : `pip install --upgrade ${name}`;
 
   try {
     const result = await executeCommandWithLogs(command);
@@ -463,9 +475,11 @@ async function updateGlobalPackage(name: string, usePip: boolean = false) {
   }
 }
 
-async function uninstallGlobalPackage(name: string, usePip: boolean = false) {
-  const packageManager = usePip ? "pip" : "uv pip";
-  const command = `${packageManager} uninstall -y ${name}`;
+async function uninstallGlobalPackage(name: string) {
+  const useUv = await isUvAvailable();
+  const command = useUv
+    ? `uv pip uninstall -y --system ${name}`
+    : `pip uninstall -y ${name}`;
 
   try {
     const result = await executeCommandWithLogs(command);
@@ -499,9 +513,13 @@ async function checkGlobalPackage(name: string) {
   }
 }
 
-async function listGlobalPackages(usePip: boolean = false) {
-  const packageManager = usePip ? "pip" : "uv pip";
-  const command = `${packageManager} list --format=json`;
+async function listGlobalPackages() {
+  // 自动检测 uv 是否可用，优先使用 uv pip（速度更快）
+  // uv pip 和 pip 操作的是同一个 Python 环境，所以返回的包列表是一致的
+  const useUv = await isUvAvailable();
+  const command = useUv
+    ? `uv pip list --format=json --system`
+    : `pip list --format=json`;
 
   try {
     const result = await executeCommandWithLogs(command);
@@ -550,12 +568,12 @@ async function getLatestVersion(name: string): Promise<string | null> {
   }
 }
 
-async function batchUpdatePackages(names: string[], usePip: boolean = false) {
+async function batchUpdatePackages(names: string[]) {
   const results = [];
 
   for (const name of names) {
     try {
-      const result = await updateGlobalPackage(name, usePip);
+      const result = await updateGlobalPackage(name);
       results.push({
         name,
         success: result.success,
@@ -652,18 +670,93 @@ async function setEnvironmentVariable(
 }
 
 // Python下载
+function fetchJson<T = unknown>(url: string): Promise<T> {
+  return new Promise((resolve, reject) => {
+    https
+      .get(url, (res) => {
+        if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400) {
+          const location = res.headers.location;
+          if (location) {
+            fetchJson<T>(location).then(resolve).catch(reject);
+            res.resume();
+            return;
+          }
+        }
+
+        if (res.statusCode && (res.statusCode < 200 || res.statusCode >= 300)) {
+          reject(new Error(`HTTP ${res.statusCode}`));
+          res.resume();
+          return;
+        }
+
+        let rawData = "";
+        res.setEncoding("utf8");
+        res.on("data", (chunk) => {
+          rawData += chunk;
+        });
+        res.on("end", () => {
+          try {
+            const parsed = JSON.parse(rawData) as T;
+            resolve(parsed);
+          } catch (error) {
+            reject(error);
+          }
+        });
+      })
+      .on("error", (error) => {
+        reject(error);
+      });
+  });
+}
+
 async function getPythonVersions() {
   try {
-    const response = await fetch(
-      "https://www.python.org/api/v2/downloads/release/"
+    const data = await fetchJson<
+      Array<{
+        name: string;
+        release_date: string;
+        pre_release: boolean;
+        is_published: boolean;
+        resource_uri: string;
+      }>
+    >(
+      "https://www.python.org/api/v2/downloads/release/?is_published=true&show_on_download_page=true&ordering=-release_date"
     );
-    const data = await response.json();
 
-    return data.map((release: any) => ({
-      version: release.name.replace("Python ", ""),
-      releaseDate: release.release_date,
-      isPreRelease: release.is_published && release.pre_release,
-    }));
+    const versions = data
+      .filter((release) => release.is_published)
+      .map((release) => {
+        const version = release.name.replace("Python ", "");
+        const match = version.match(/(\d+\.\d+\.\d+)/);
+        const normalized = match ? match[1] : null;
+
+        return normalized
+          ? {
+              version: normalized,
+              releaseDate: release.release_date,
+              isPreRelease: release.pre_release,
+              resourceUri: release.resource_uri,
+            }
+          : null;
+      })
+      .filter(
+        (
+          item
+        ): item is {
+          version: string;
+          releaseDate: string;
+          isPreRelease: boolean;
+          resourceUri: string;
+        } => !!item
+      );
+
+    if (versions.length > 0) {
+      return versions.sort((a, b) =>
+        b.version.localeCompare(a.version, undefined, { numeric: true })
+      );
+    }
+
+    return [];
   } catch {
     return [];
   }

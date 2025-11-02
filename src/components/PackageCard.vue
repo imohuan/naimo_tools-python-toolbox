@@ -100,78 +100,84 @@
         :class="
           operation?.updating ||
           operation?.uninstalling ||
-          operation?.installing
+          operation?.installing ||
+          operation?.checking
             ? 'opacity-100'
             : 'opacity-0 group-hover:opacity-100'
         "
       >
         <!-- 检查更新按钮 -->
-        <button
+        <PackageActionButton
           v-if="
             variant === 'installed' &&
             (!('latestVersion' in data) || data.latestVersion === undefined)
           "
-          @click="$emit('check-update', data.name)"
-          class="w-6 h-6 flex items-center justify-center text-blue-600 hover:bg-blue-50 rounded transition-all"
+          icon="search"
+          variant="blue"
           title="检查更新"
-        >
-          <Icon name="search" size="xs" />
-        </button>
+          :loading="operation?.checking"
+          :disabled="
+            operation?.updating ||
+            operation?.uninstalling ||
+            operation?.installing ||
+            operation?.checking
+          "
+          @click="$emit('check-update', data.name)"
+        />
 
         <!-- 更新按钮 -->
-        <button
+        <PackageActionButton
           v-if="
             'hasUpdate' in data && data.hasUpdate && variant === 'installed'
           "
-          @click="$emit('update', data.name)"
-          :disabled="operation?.updating || operation?.uninstalling"
-          class="w-6 h-6 flex items-center justify-center text-green-600 hover:bg-green-50 rounded transition-all disabled:opacity-50"
+          icon="upload"
+          variant="green"
           title="更新"
-        >
-          <Icon v-if="!operation?.updating" name="upload" size="xs" />
-          <div
-            v-else
-            class="w-2.5 h-2.5 border-2 border-green-600 border-t-transparent rounded-full animate-spin"
-          ></div>
-        </button>
+          :loading="operation?.updating"
+          :disabled="
+            operation?.uninstalling ||
+            operation?.installing ||
+            operation?.checking ||
+            operation?.updating
+          "
+          @click="$emit('update', data.name)"
+        />
 
         <!-- 安装按钮 -->
-        <button
+        <PackageActionButton
           v-if="
             variant === 'recommended' ||
             (variant === 'search' &&
               (!('installed' in data) || !data.installed))
           "
-          @click="$emit('install', data.name)"
-          :disabled="
-            operation?.installing ||
-            operation?.updating ||
-            operation?.uninstalling
-          "
-          class="w-6 h-6 flex items-center justify-center text-green-600 hover:bg-green-50 rounded transition-all disabled:opacity-50"
+          icon="download"
+          variant="green"
           title="安装"
-        >
-          <Icon v-if="!operation?.installing" name="download" size="xs" />
-          <div
-            v-else
-            class="w-2.5 h-2.5 border-2 border-green-600 border-t-transparent rounded-full animate-spin"
-          ></div>
-        </button>
+          :loading="operation?.installing"
+          :disabled="
+            operation?.updating ||
+            operation?.uninstalling ||
+            operation?.checking ||
+            operation?.installing
+          "
+          @click="$emit('install', data.name)"
+        />
 
         <!-- 卸载按钮 -->
-        <button
+        <PackageActionButton
           v-if="variant === 'installed'"
-          @click="$emit('uninstall', data.name)"
-          :disabled="operation?.updating || operation?.uninstalling"
-          class="w-6 h-6 flex items-center justify-center text-red-600 hover:bg-red-50 rounded transition-all disabled:opacity-50"
+          icon="trash"
+          variant="red"
           title="卸载"
-        >
-          <Icon v-if="!operation?.uninstalling" name="trash" size="xs" />
-          <div
-            v-else
-            class="w-2.5 h-2.5 border-2 border-red-600 border-t-transparent rounded-full animate-spin"
-          ></div>
-        </button>
+          :loading="operation?.uninstalling"
+          :disabled="
+            operation?.updating ||
+            operation?.installing ||
+            operation?.checking ||
+            operation?.uninstalling
+          "
+          @click="$emit('uninstall', data.name)"
+        />
       </div>
     </div>
   </div>
@@ -179,7 +185,7 @@
 
 <script setup lang="ts">
 import type { GlobalPackage, RecommendedTool, SearchPackage } from "../types";
-import Icon from "./Icon.vue";
+import PackageActionButton from "./PackageActionButton.vue";
 
 interface Props {
   data: GlobalPackage | RecommendedTool | SearchPackage;
@@ -188,6 +194,7 @@ interface Props {
     installing: boolean;
     updating: boolean;
     uninstalling: boolean;
+    checking: boolean;
   };
 }
 

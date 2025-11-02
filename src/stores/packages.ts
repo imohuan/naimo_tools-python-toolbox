@@ -104,7 +104,9 @@ export const usePackagesStore = defineStore("packages", () => {
   const isSearching = ref(false);
   const isCheckingUpdates = ref(false);
   const checkProgress = ref(0);
-  const usePip = ref(false); // 默认使用 uv
+  const currentCheckingPackage = ref("");
+  const shouldCancelCheck = ref(false);
+  const isCancelling = ref(false);
   const commandLoading = ref(false);
   const commandMessage = ref("");
 
@@ -134,13 +136,11 @@ export const usePackagesStore = defineStore("packages", () => {
     return recommendedTools.filter((tool) => !installedNames.has(tool.name));
   });
 
-  // 获取全局包列表
+  // 获取全局包列表（自动检测 uv，优先使用 uv pip）
   async function fetchPackages() {
     isLoading.value = true;
     try {
-      const result = await window.pythonToolboxAPI.listGlobalPackages(
-        usePip.value
-      );
+      const result = await window.pythonToolboxAPI.listGlobalPackages();
 
       // 先显示包列表，不检查最新版本（避免大量API调用导致卡死）
       packages.value = result.packages.map((pkg) => {
@@ -191,25 +191,63 @@ export const usePackagesStore = defineStore("packages", () => {
 
     isCheckingUpdates.value = true;
     checkProgress.value = 0;
+    currentCheckingPackage.value = "";
+    shouldCancelCheck.value = false;
+    isCancelling.value = false;
 
     try {
       const total = packages.value.length;
 
       for (let i = 0; i < total; i++) {
+        // 检查是否取消
+        if (shouldCancelCheck.value) {
+          break;
+        }
+
         const pkg = packages.value[i];
+        currentCheckingPackage.value = pkg.name;
+
+        // 如果正在取消，显示提示
+        if (isCancelling.value && currentCheckingPackage.value) {
+          // 继续执行但设置标志，让用户知道正在等待当前操作完成
+        }
+
         await checkPackageUpdate(pkg.name);
+
+        // 检查是否取消（在API调用之后也检查）
+        if (shouldCancelCheck.value) {
+          break;
+        }
 
         // 更新进度
         checkProgress.value = Math.round(((i + 1) / total) * 100);
 
-        // 添加小延迟，避免请求过快
-        await new Promise((resolve) => setTimeout(resolve, 100));
+        // 添加小延迟，避免请求过快（如果已取消则跳过延迟）
+        if (!shouldCancelCheck.value) {
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        }
       }
     } catch (error) {
       console.error("批量检查更新失败:", error);
     } finally {
+      currentCheckingPackage.value = "";
       isCheckingUpdates.value = false;
       checkProgress.value = 0;
+      shouldCancelCheck.value = false;
+      isCancelling.value = false;
+    }
+  }
+
+  // 取消检查更新
+  function cancelCheckUpdates() {
+    if (currentCheckingPackage.value) {
+      // 如果当前正在检查某个包，设置取消标志并显示提示
+      isCancelling.value = true;
+      shouldCancelCheck.value = true;
+    } else {
+      // 如果没有正在检查的包，直接取消
+      shouldCancelCheck.value = true;
+      isCancelling.value = false;
     }
   }
 
@@ -217,10 +255,7 @@ export const usePackagesStore = defineStore("packages", () => {
   async function installPackage(name: string): Promise<boolean> {
     return runWithCommandLoading(async () => {
       try {
-        const result = await window.pythonToolboxAPI.installGlobalPackage(
-          name,
-          usePip.value
-        );
+        const result = await window.pythonToolboxAPI.installGlobalPackage(name);
         if (result.success) {
           await fetchPackages();
         }
@@ -229,17 +264,14 @@ export const usePackagesStore = defineStore("packages", () => {
         console.error("安装包失败:", error);
         return false;
       }
-    }, `${usePip.value ? "pip" : "uv"} install ${name}`);
+    }, `安装 ${name}`);
   }
 
   // 更新包
   async function updatePackage(name: string): Promise<boolean> {
     return runWithCommandLoading(async () => {
       try {
-        const result = await window.pythonToolboxAPI.updateGlobalPackage(
-          name,
-          usePip.value
-        );
+        const result = await window.pythonToolboxAPI.updateGlobalPackage(name);
         if (result.success) {
           await fetchPackages();
         }
@@ -248,7 +280,7 @@ export const usePackagesStore = defineStore("packages", () => {
         console.error("更新包失败:", error);
         return false;
       }
-    }, `${usePip.value ? "pip" : "uv"} update ${name}`);
+    }, `更新 ${name}`);
   }
 
   // 卸载包
@@ -256,8 +288,7 @@ export const usePackagesStore = defineStore("packages", () => {
     return runWithCommandLoading(async () => {
       try {
         const result = await window.pythonToolboxAPI.uninstallGlobalPackage(
-          name,
-          usePip.value
+          name
         );
         if (result.success) {
           await fetchPackages();
@@ -267,7 +298,7 @@ export const usePackagesStore = defineStore("packages", () => {
         console.error("卸载包失败:", error);
         return false;
       }
-    }, `${usePip.value ? "pip" : "uv"} uninstall ${name}`);
+    }, `卸载 ${name}`);
   }
 
   // 批量更新
@@ -275,23 +306,17 @@ export const usePackagesStore = defineStore("packages", () => {
     const packageNames = packagesWithUpdate.value.map((p) => p.name);
     if (packageNames.length === 0) return;
 
-    await runWithCommandLoading(
-      async () => {
-        isLoading.value = true;
-        try {
-          await window.pythonToolboxAPI.batchUpdatePackages(
-            packageNames,
-            usePip.value
-          );
-          await fetchPackages();
-        } catch (error) {
-          console.error("批量更新失败:", error);
-        } finally {
-          isLoading.value = false;
-        }
-      },
-      `${usePip.value ? "pip" : "uv"} update ${packageNames.length} packages`
-    );
+    await runWithCommandLoading(async () => {
+      isLoading.value = true;
+      try {
+        await window.pythonToolboxAPI.batchUpdatePackages(packageNames);
+        await fetchPackages();
+      } catch (error) {
+        console.error("批量更新失败:", error);
+      } finally {
+        isLoading.value = false;
+      }
+    }, `批量更新 ${packageNames.length} 个包`);
   }
 
   // 批量安装推荐工具
@@ -304,10 +329,7 @@ export const usePackagesStore = defineStore("packages", () => {
       try {
         for (const name of toolNames) {
           try {
-            await window.pythonToolboxAPI.installGlobalPackage(
-              name,
-              usePip.value
-            );
+            await window.pythonToolboxAPI.installGlobalPackage(name);
           } catch (error) {
             console.error(`安装推荐工具 ${name} 失败:`, error);
           }
@@ -318,7 +340,7 @@ export const usePackagesStore = defineStore("packages", () => {
       } finally {
         isLoading.value = false;
       }
-    }, `${usePip.value ? "pip" : "uv"} install ${toolNames.length} packages`);
+    }, `批量安装 ${toolNames.length} 个推荐工具`);
   }
 
   // 搜索包
@@ -348,11 +370,6 @@ export const usePackagesStore = defineStore("packages", () => {
     }
   }
 
-  // 切换包管理器
-  function togglePackageManager() {
-    usePip.value = !usePip.value;
-  }
-
   async function runWithCommandLoading<T>(
     task: () => Promise<T>,
     message: string
@@ -374,7 +391,8 @@ export const usePackagesStore = defineStore("packages", () => {
     isSearching,
     isCheckingUpdates,
     checkProgress,
-    usePip,
+    currentCheckingPackage,
+    isCancelling,
     commandLoading,
     commandMessage,
     packagesByCategory,
@@ -384,12 +402,12 @@ export const usePackagesStore = defineStore("packages", () => {
     fetchPackages,
     checkPackageUpdate,
     checkAllUpdates,
+    cancelCheckUpdates,
     installPackage,
     updatePackage,
     uninstallPackage,
     updateAllPackages,
     installRecommendedTools,
     searchPackages,
-    togglePackageManager,
   };
 });
