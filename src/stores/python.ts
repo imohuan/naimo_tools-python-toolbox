@@ -15,6 +15,10 @@ export const usePythonStore = defineStore("python", () => {
   const selectedPlatform = ref<Platform>("win-x64");
   const isLoadingInfo = ref(false);
   const isLoadingVersions = ref(false);
+  const pipSupportedOptions = ref<Set<string>>(new Set());
+  const uvSupportedOptions = ref<Set<string>>(new Set());
+
+  const normalizeFlag = (flag: string) => flag.toLowerCase();
 
   // 比较版本号
   function compareVersion(current: string, latest: string): number {
@@ -74,6 +78,7 @@ export const usePythonStore = defineStore("python", () => {
       };
 
       checkUpdate();
+      void ensureCliOptions();
       return true;
     } catch (error) {
       console.error("获取 Python 信息失败:", error);
@@ -81,6 +86,72 @@ export const usePythonStore = defineStore("python", () => {
     } finally {
       isLoadingInfo.value = false;
     }
+  }
+
+  async function fetchPipCliOptions(force = false): Promise<boolean> {
+    if (!window.pythonToolboxAPI?.getPipSupportedOptions) {
+      return false;
+    }
+
+    if (!force && pipSupportedOptions.value.size > 0) {
+      return true;
+    }
+
+    try {
+      const result = await window.pythonToolboxAPI.getPipSupportedOptions();
+      pipSupportedOptions.value = new Set(
+        result.options.map((flag) => normalizeFlag(flag))
+      );
+      return true;
+    } catch (error) {
+      console.error("获取 pip 选项信息失败:", error);
+      return false;
+    }
+  }
+
+  async function fetchUvCliOptions(force = false): Promise<boolean> {
+    if (!window.pythonToolboxAPI?.getUvSupportedOptions) {
+      return false;
+    }
+
+    if (!force && uvSupportedOptions.value.size > 0) {
+      return true;
+    }
+
+    try {
+      const result = await window.pythonToolboxAPI.getUvSupportedOptions();
+      uvSupportedOptions.value = new Set(
+        result.options.map((flag) => normalizeFlag(flag))
+      );
+      return true;
+    } catch (error) {
+      console.error("获取 uv 选项信息失败:", error);
+      return false;
+    }
+  }
+
+  async function ensureCliOptions() {
+    await Promise.all([fetchPipCliOptions(), fetchUvCliOptions()]);
+  }
+
+  function isPipOptionSupported(flag: string): boolean {
+    if (pipSupportedOptions.value.size === 0) return true;
+    return pipSupportedOptions.value.has(normalizeFlag(flag));
+  }
+
+  function isUvOptionSupported(flag: string): boolean {
+    if (uvSupportedOptions.value.size === 0) return true;
+    return uvSupportedOptions.value.has(normalizeFlag(flag));
+  }
+
+  function isPipVersionAtLeast(version: string): boolean {
+    if (!pythonInfo.value.pipVersion) return true;
+    return compareVersion(pythonInfo.value.pipVersion, version) >= 0;
+  }
+
+  function isUvVersionAtLeast(version: string): boolean {
+    if (!pythonInfo.value.uvVersion) return true;
+    return compareVersion(pythonInfo.value.uvVersion, version) >= 0;
   }
 
   // 获取 Python 版本列表
@@ -177,8 +248,17 @@ export const usePythonStore = defineStore("python", () => {
     selectedPlatform,
     isLoadingInfo,
     isLoadingVersions,
+    pipSupportedOptions,
+    uvSupportedOptions,
     fetchPythonInfo,
     fetchVersions,
     getDownloadInfo,
+    fetchPipCliOptions,
+    fetchUvCliOptions,
+    ensureCliOptions,
+    isPipOptionSupported,
+    isUvOptionSupported,
+    isPipVersionAtLeast,
+    isUvVersionAtLeast,
   };
 });

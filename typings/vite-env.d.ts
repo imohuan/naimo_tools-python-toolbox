@@ -23,6 +23,16 @@ declare global {
         uvPath: string | null;
         logs: string[];
       }>;
+      getPipSupportedOptions: () => Promise<{
+        options: string[];
+        sourceCommands: string[];
+        fetchedAt: string;
+      }>;
+      getUvSupportedOptions: () => Promise<{
+        options: string[];
+        sourceCommands: string[];
+        fetchedAt: string;
+      }>;
       getPythonVersions: () => Promise<
         Array<{
           version: string;

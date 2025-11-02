@@ -106,21 +106,30 @@
             : 'opacity-0 group-hover:opacity-100'
         "
       >
-        <!-- 检查更新按钮 -->
+        <!-- 检查更新加载指示器（始终显示，不需要hover） -->
+        <div
+          v-if="operation?.checking && variant === 'installed'"
+          class="flex items-center gap-1 px-1.5 py-0.5 rounded bg-blue-50 border border-blue-200"
+        >
+          <div
+            class="w-2.5 h-2.5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"
+          ></div>
+          <span class="text-[10px] text-blue-600 font-medium">检查中</span>
+        </div>
+        <!-- 检查更新按钮（检查中时隐藏） -->
         <PackageActionButton
           v-if="
             variant === 'installed' &&
-            (!('latestVersion' in data) || data.latestVersion === undefined)
+            (!('latestVersion' in data) || data.latestVersion === undefined) &&
+            !operation?.checking
           "
           icon="search"
           variant="blue"
           title="检查更新"
-          :loading="operation?.checking"
           :disabled="
             operation?.updating ||
             operation?.uninstalling ||
-            operation?.installing ||
-            operation?.checking
+            operation?.installing
           "
           @click="$emit('check-update', data.name)"
         />

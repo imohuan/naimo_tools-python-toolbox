@@ -105,6 +105,7 @@ export const usePackagesStore = defineStore("packages", () => {
   const isCheckingUpdates = ref(false);
   const checkProgress = ref(0);
   const currentCheckingPackage = ref("");
+  const currentlyCheckingPackages = ref<Set<string>>(new Set());
   const shouldCancelCheck = ref(false);
   const isCancelling = ref(false);
   const commandLoading = ref(false);
@@ -185,52 +186,86 @@ export const usePackagesStore = defineStore("packages", () => {
     }
   }
 
-  // 逐个检查所有包的更新
+  // 批量检查所有包的更新（使用5个并发执行器）
   async function checkAllUpdates() {
     if (packages.value.length === 0 || isCheckingUpdates.value) return;
 
     isCheckingUpdates.value = true;
     checkProgress.value = 0;
     currentCheckingPackage.value = "";
+    currentlyCheckingPackages.value.clear();
     shouldCancelCheck.value = false;
     isCancelling.value = false;
 
     try {
       const total = packages.value.length;
+      const CONCURRENT_LIMIT = 5; // 并发执行器数量
+      let completedCount = 0;
 
-      for (let i = 0; i < total; i++) {
-        // 检查是否取消
-        if (shouldCancelCheck.value) {
-          break;
+      // 创建任务队列
+      const taskQueue = packages.value.map((pkg) => pkg.name);
+      let taskIndex = 0;
+
+      // 原子性地获取下一个任务索引
+      const getNextTaskIndex = () => {
+        if (taskIndex >= taskQueue.length) return -1;
+        return taskIndex++;
+      };
+
+      // 创建并发执行器函数
+      const worker = async () => {
+        while (!shouldCancelCheck.value) {
+          // 从队列中获取任务
+          const currentIndex = getNextTaskIndex();
+          if (currentIndex < 0) break;
+
+          const packageName = taskQueue[currentIndex];
+
+          // 添加到正在检查的集合
+          currentlyCheckingPackages.value.add(packageName);
+          // 更新当前检查的包名（显示第一个）
+          if (!currentCheckingPackage.value) {
+            currentCheckingPackage.value = packageName;
+          }
+
+          try {
+            // 执行检查任务
+            await checkPackageUpdate(packageName);
+          } catch (error) {
+            console.error(`检查 ${packageName} 更新失败:`, error);
+          } finally {
+            // 从正在检查的集合中移除
+            currentlyCheckingPackages.value.delete(packageName);
+            completedCount++;
+
+            // 更新进度
+            checkProgress.value = Math.round((completedCount / total) * 100);
+
+            // 更新当前检查的包名（如果当前包完成了，显示集合中下一个）
+            if (currentCheckingPackage.value === packageName) {
+              if (currentlyCheckingPackages.value.size > 0) {
+                // 显示集合中第一个正在检查的包
+                currentCheckingPackage.value = Array.from(
+                  currentlyCheckingPackages.value
+                )[0];
+              } else if (completedCount === total) {
+                currentCheckingPackage.value = "";
+              }
+            }
+          }
         }
+      };
 
-        const pkg = packages.value[i];
-        currentCheckingPackage.value = pkg.name;
+      // 启动5个并发执行器
+      const workers = Array.from({ length: CONCURRENT_LIMIT }, () => worker());
 
-        // 如果正在取消，显示提示
-        if (isCancelling.value && currentCheckingPackage.value) {
-          // 继续执行但设置标志，让用户知道正在等待当前操作完成
-        }
-
-        await checkPackageUpdate(pkg.name);
-
-        // 检查是否取消（在API调用之后也检查）
-        if (shouldCancelCheck.value) {
-          break;
-        }
-
-        // 更新进度
-        checkProgress.value = Math.round(((i + 1) / total) * 100);
-
-        // 添加小延迟，避免请求过快（如果已取消则跳过延迟）
-        if (!shouldCancelCheck.value) {
-          await new Promise((resolve) => setTimeout(resolve, 100));
-        }
-      }
+      // 等待所有执行器完成
+      await Promise.all(workers);
     } catch (error) {
       console.error("批量检查更新失败:", error);
     } finally {
       currentCheckingPackage.value = "";
+      currentlyCheckingPackages.value.clear();
       isCheckingUpdates.value = false;
       checkProgress.value = 0;
       shouldCancelCheck.value = false;
@@ -392,6 +427,7 @@ export const usePackagesStore = defineStore("packages", () => {
     isCheckingUpdates,
     checkProgress,
     currentCheckingPackage,
+    currentlyCheckingPackages,
     isCancelling,
     commandLoading,
     commandMessage,

@@ -51,6 +51,16 @@ interface PythonToolboxAPI {
     uvPath: string | null;
     logs: string[];
   }>;
+  getPipSupportedOptions: () => Promise<{
+    options: string[];
+    sourceCommands: string[];
+    fetchedAt: string;
+  }>;
+  getUvSupportedOptions: () => Promise<{
+    options: string[];
+    sourceCommands: string[];
+    fetchedAt: string;
+  }>;
 
   // 执行命令
   executeCommand: (command: string) => Promise<{
@@ -113,10 +123,16 @@ interface PythonToolboxAPI {
   readPipConfig: () => Promise<string>;
   writePipConfig: (content: string) => Promise<void>;
   getPipConfigPath: () => Promise<string>;
+  readUvConfig: () => Promise<string>;
+  writeUvConfig: (content: string) => Promise<void>;
+  getUvConfigPath: () => Promise<string>;
 
   // 环境变量管理
   getEnvironmentVariables: () => Promise<Record<string, string>>;
   setEnvironmentVariable: (key: string, value: string) => Promise<void>;
+
+  // 文件系统操作
+  selectFolder: () => Promise<string | null>;
 
   // Python 下载
   downloadPython: (
@@ -569,26 +585,62 @@ async function getLatestVersion(name: string): Promise<string | null> {
 }
 
 async function batchUpdatePackages(names: string[]) {
-  const results = [];
+  const results: Array<{
+    name: string;
+    success: boolean;
+    stdout?: string;
+    stderr?: string;
+    error?: string;
+  }> = [];
 
-  for (const name of names) {
-    try {
-      const result = await updateGlobalPackage(name);
-      results.push({
-        name,
-        success: result.success,
-        stdout: result.stdout,
-        stderr: result.stderr,
-        error: result.error,
-      });
-    } catch (error: any) {
-      results.push({
-        name,
-        success: false,
-        error: error.message,
-      });
+  if (names.length === 0) return results;
+
+  const CONCURRENT_LIMIT = 5; // 并发执行器数量
+  let taskIndex = 0;
+  const taskQueue = [...names];
+
+  // 原子性地获取下一个任务索引
+  const getNextTaskIndex = () => {
+    if (taskIndex >= taskQueue.length) return -1;
+    return taskIndex++;
+  };
+
+  // 创建并发执行器函数
+  const worker = async () => {
+    while (true) {
+      // 从队列中获取任务
+      const currentIndex = getNextTaskIndex();
+      if (currentIndex < 0) break;
+
+      const name = taskQueue[currentIndex];
+
+      try {
+        const result = await updateGlobalPackage(name);
+        results.push({
+          name,
+          success: result.success,
+          stdout: result.stdout,
+          stderr: result.stderr,
+          error: result.error,
+        });
+      } catch (error: any) {
+        results.push({
+          name,
+          success: false,
+          error: error.message,
+        });
+      }
     }
-  }
+  };
+
+  // 启动5个并发执行器
+  const workers = Array.from(
+    { length: Math.min(CONCURRENT_LIMIT, names.length) },
+    () => worker()
+  );
+
+  // 等待所有执行器完成
+  await Promise.all(workers);
 
   return results;
 }
@@ -651,6 +703,31 @@ async function writePipConfig(content: string): Promise<void> {
   await fs.writeFile(configPath, content, "utf-8");
 }
 
+// uv配置文件操作
+async function getUvConfigPath(): Promise<string> {
+  const homeDir = os.homedir();
+  const configDir = path.join(homeDir, ".config", "uv");
+  return path.join(configDir, "uv.toml");
+}
+
+async function readUvConfig(): Promise<string> {
+  try {
+    const configPath = await getUvConfigPath();
+    const content = await fs.readFile(configPath, "utf-8");
+    return content;
+  } catch {
+    return "";
+  }
+}
+
+async function writeUvConfig(content: string): Promise<void> {
+  const configPath = await getUvConfigPath();
+  const dir = path.dirname(configPath);
+
+  await fs.mkdir(dir, { recursive: true });
+  await fs.writeFile(configPath, content, "utf-8");
+}
+
 // 环境变量管理
 async function getEnvironmentVariables(): Promise<Record<string, string>> {
   return { ...process.env } as Record<string, string>;
@@ -666,6 +743,23 @@ async function setEnvironmentVariable(
     await execAsync(`setx ${key} "${value}"`);
   } else {
     throw new Error("设置环境变量在非Windows系统上需要手动操作");
+  }
+}
+
+async function selectFolder(): Promise<string | null> {
+  try {
+    const result = await window.naimo.dialog.showOpen({
+      properties: ["openDirectory"],
+      title: "选择文件夹",
+    });
+
+    if (result && result.length > 0) {
+      return result[0];
+    }
+    return null;
+  } catch (error: any) {
+    console.error("选择文件夹失败:", error);
+    return null;
   }
 }
 
@@ -789,7 +883,7 @@ async function downloadPython(version: string, platform: string) {
 
 // 虚拟环境管理
 async function createVirtualEnv(
-  name: string,
+  _name: string,
   envPath: string,
   useUv: boolean = false
 ) {
@@ -868,6 +962,84 @@ async function getSystemInfo() {
   };
 }
 
+type CliOptionResult = {
+  options: string[];
+  sourceCommands: string[];
+  fetchedAt: string;
+};
+
+const CLI_OPTION_REGEX = /--[a-z0-9][\w-]*/gi;
+
+function addCliOptions(output: string, collector: Set<string>) {
+  if (!output) return;
+  const matches = output.match(CLI_OPTION_REGEX);
+  if (!matches) return;
+  matches.forEach((flag) => {
+    collector.add(flag.toLowerCase());
+  });
+}
+
+async function collectCliOptions(commands: string[]): Promise<CliOptionResult> {
+  const collector = new Set<string>();
+  const executed: string[] = [];
+
+  for (const command of commands) {
+    sendLog(`正在执行命令: ${command}`);
+    const { stdout, stderr } = await executeCommandWithLogs(command);
+    executed.push(command);
+    addCliOptions(stdout, collector);
+    addCliOptions(stderr, collector);
+  }
+
+  return {
+    options: Array.from(collector).sort(),
+    sourceCommands: executed,
+    fetchedAt: new Date().toISOString(),
+  };
+}
+
+let pipOptionsCache: CliOptionResult | null = null;
+let pipOptionsPromise: Promise<CliOptionResult> | null = null;
+
+async function getPipCliOptions(): Promise<CliOptionResult> {
+  if (pipOptionsCache) {
+    return pipOptionsCache;
+  }
+
+  if (!pipOptionsPromise) {
+    pipOptionsPromise = collectCliOptions([
+      "pip --help",
+      "pip install --help",
+      "pip config --help",
+      "pip download --help",
+    ]);
+  }
+
+  pipOptionsCache = await pipOptionsPromise;
+  pipOptionsPromise = null;
+  return pipOptionsCache;
+}
+
+let uvOptionsCache: CliOptionResult | null = null;
+let uvOptionsPromise: Promise<CliOptionResult> | null = null;
+
+async function getUvCliOptions(): Promise<CliOptionResult> {
+  if (uvOptionsCache) {
+    return uvOptionsCache;
+  }
+
+  if (!uvOptionsPromise) {
+    uvOptionsPromise = collectCliOptions([
+      "uv --help",
+      "uv pip install --help",
+    ]);
+  }
+
+  uvOptionsCache = await uvOptionsPromise;
+  uvOptionsPromise = null;
+  return uvOptionsCache;
+}
+
 // 暴露API到渲染进程
 const api: PythonToolboxAPI = {
   onLog: (callback: LogCallback) => {
@@ -891,6 +1063,20 @@ const api: PythonToolboxAPI = {
   getUvVersion,
   getPythonPath,
   getEnvironmentInfo,
+  getPipSupportedOptions: async () => {
+    const result = await getPipCliOptions();
+    return {
+      ...result,
+      options: result.options,
+    };
+  },
+  getUvSupportedOptions: async () => {
+    const result = await getUvCliOptions();
+    return {
+      ...result,
+      options: result.options,
+    };
+  },
 
   executeCommand: executeCommandWithLogs,
 
@@ -907,8 +1093,14 @@ const api: PythonToolboxAPI = {
   writePipConfig,
   getPipConfigPath,
 
+  readUvConfig,
+  writeUvConfig,
+  getUvConfigPath,
+
   getEnvironmentVariables,
   setEnvironmentVariable,
+
+  selectFolder,
 
   downloadPython,
   getPythonVersions,

@@ -349,6 +349,7 @@ const {
   isCheckingUpdates,
   checkProgress,
   currentCheckingPackage,
+  currentlyCheckingPackages,
   isCancelling,
   packagesByCategory,
   packagesWithUpdate,
@@ -375,7 +376,7 @@ function getPackageOperation(packageName: string) {
     uninstalling: uninstallingPackage.value === packageName,
     checking:
       checkingPackage.value === packageName ||
-      currentCheckingPackage.value === packageName,
+      currentlyCheckingPackages.value.has(packageName),
   };
 }
 

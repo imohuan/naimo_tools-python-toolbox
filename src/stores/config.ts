@@ -1,6 +1,7 @@
 import { defineStore } from "pinia";
 import { ref, computed } from "vue";
 import type { PyConfig, ViewMode } from "../types";
+import { pipFieldToConfigItem, pipFields } from "../data/pip-fields";
 
 // 预设配置方案
 const presetConfigs: PyConfig[] = [
@@ -9,35 +10,16 @@ const presetConfigs: PyConfig[] = [
     name: "清华镜像",
     description: "使用清华大学 PyPI 镜像加速下载",
     items: [
-      {
-        key: "index-url",
-        label: "镜像源",
-        description: "PyPI 包下载源",
-        type: "select",
-        value: "https://pypi.tuna.tsinghua.edu.cn/simple",
-        options: [
-          {
-            label: "清华镜像",
-            value: "https://pypi.tuna.tsinghua.edu.cn/simple",
-          },
-          { label: "官方源", value: "https://pypi.org/simple" },
-          {
-            label: "阿里云",
-            value: "https://mirrors.aliyun.com/pypi/simple/",
-          },
-          {
-            label: "腾讯云",
-            value: "https://mirrors.cloud.tencent.com/pypi/simple",
-          },
-        ],
-      },
-      {
-        key: "trusted-host",
-        label: "信任主机",
-        description: "信任的主机地址",
-        type: "text",
-        value: "pypi.tuna.tsinghua.edu.cn",
-      },
+      pipFieldToConfigItem(
+        pipFields.find((f) => f.key === "index-url")!,
+        "https://pypi.tuna.tsinghua.edu.cn/simple"
+      ),
+      pipFieldToConfigItem(
+        pipFields.find((f) => f.key === "trusted-host")!,
+        "pypi.tuna.tsinghua.edu.cn"
+      ),
+      pipFieldToConfigItem(pipFields.find((f) => f.key === "timeout")!),
+      pipFieldToConfigItem(pipFields.find((f) => f.key === "retries")!),
     ],
   },
   {
@@ -45,21 +27,50 @@ const presetConfigs: PyConfig[] = [
     name: "阿里云镜像",
     description: "使用阿里云 PyPI 镜像",
     items: [
-      {
-        key: "index-url",
-        label: "镜像源",
-        description: "PyPI 包下载源",
-        type: "text",
-        value: "https://mirrors.aliyun.com/pypi/simple/",
-      },
-      {
-        key: "trusted-host",
-        label: "信任主机",
-        description: "信任的主机地址",
-        type: "text",
-        value: "mirrors.aliyun.com",
-      },
+      pipFieldToConfigItem(
+        pipFields.find((f) => f.key === "index-url")!,
+        "https://mirrors.aliyun.com/pypi/simple/"
+      ),
+      pipFieldToConfigItem(
+        pipFields.find((f) => f.key === "trusted-host")!,
+        "mirrors.aliyun.com"
+      ),
+      pipFieldToConfigItem(pipFields.find((f) => f.key === "timeout")!),
+      pipFieldToConfigItem(pipFields.find((f) => f.key === "retries")!),
     ],
+  },
+  {
+    id: "complete",
+    name: "完整配置",
+    description: "包含所有常用配置项的完整方案",
+    items: pipFields
+      .filter((f) => {
+        // 只包含常用配置项
+        const commonKeys = [
+          "index-url",
+          "extra-index-url",
+          "trusted-host",
+          "find-links",
+          "timeout",
+          "retries",
+          "proxy",
+          "cert",
+          "client-cert",
+          "cache-dir",
+          "no-cache-dir",
+          "upgrade-strategy",
+          "pre",
+          "require-virtualenv",
+          "compile",
+          "log",
+          "verbose",
+          "progress-bar",
+          "disable-pip-version-check",
+          "use-feature",
+        ];
+        return commonKeys.includes(f.key);
+      })
+      .map((field) => pipFieldToConfigItem(field)),
   },
 ];
 
@@ -82,14 +93,70 @@ export const useConfigStore = defineStore("config", () => {
     const config = currentConfig.value;
     if (!config) return "";
 
-    const lines = ["[global]"];
+    // 根据配置节分组
+    const sections: Record<string, Array<{ key: string; value: string }>> = {};
+
     config.items.forEach((item) => {
-      if (item.value) {
-        lines.push(`${item.key} = ${item.value}`);
+      if (item.value && item.value !== "false") {
+        // 查找配置项所属的节
+        const field = pipFields.find((f) => f.key === item.key);
+        const section = field?.section || "global";
+
+        if (!sections[section]) {
+          sections[section] = [];
+        }
+
+        // boolean 类型为 true 时只写 key，不需要值
+        if (item.type === "boolean" && item.value === "true") {
+          sections[section].push({ key: item.key, value: "" });
+        } else if (item.type !== "boolean") {
+          sections[section].push({ key: item.key, value: item.value });
+        }
       }
     });
 
-    return lines.join("\n");
+    // 生成配置内容
+    const lines: string[] = [];
+    const sectionOrder = [
+      "global",
+      "install",
+      "download",
+      "list",
+      "search",
+      "freeze",
+      "uninstall",
+    ];
+
+    sectionOrder.forEach((section) => {
+      if (sections[section] && sections[section].length > 0) {
+        lines.push(`[${section}]`);
+        sections[section].forEach((item) => {
+          if (item.value) {
+            lines.push(`${item.key} = ${item.value}`);
+          } else {
+            lines.push(item.key);
+          }
+        });
+        lines.push(""); // 添加空行分隔
+      }
+    });
+
+    // 处理其他自定义节
+    Object.keys(sections).forEach((section) => {
+      if (!sectionOrder.includes(section)) {
+        lines.push(`[${section}]`);
+        sections[section].forEach((item) => {
+          if (item.value) {
+            lines.push(`${item.key} = ${item.value}`);
+          } else {
+            lines.push(item.key);
+          }
+        });
+        lines.push("");
+      }
+    });
+
+    return lines.join("\n").trim();
   });
 
   // 切换配置方案
